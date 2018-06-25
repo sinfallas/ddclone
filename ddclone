@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Made by Sinfallas <sinfallas@yahoo.com>
+# Licence: GPL-2
+set -eu
+LC_ALL=C
+trap "rm -f /run/$(basename $0).pid; exit" 0 1 2 3 15
+echo "$BASHPID" > /run/$(basename $0).pid
+source /usr/bin/variables
+rootyad
+
+if ! [[ -f /usr/bin/yad ]]; then
+	apt -q update
+	apt -y --force-yes install yad coreutils pv pigz
+fi
+
+disco=$(fdisk -l | grep "Disco" | awk '{print $2}' | sed 's/.$//g' | yad --center --no-click --list --title="Disco" --text="Seleccione el disco que desea clonar." --separator="" --column 'Dispositivo' --height 380 --width 150 --button="ACEPTAR":0)
+if [[ -z "$disco" ]]; then
+	yad --center --window-icon=error --title="Error" --button="Ir atras":0 --button="Salir":1 --text="No selecciono nada. Debe escoger un disco."
+	if [[ $? = 0 ]]; then
+		source $0
+	else
+		rm -f /run/$(basename $0).pid
+		exit 1
+	fi
+fi
+
+usb=$(fdisk -l | grep "Disco" | grep -v "loop" | grep -v "zram" | awk '{print $2}' | sed 's/.$//g' | yad --center --no-click --list --title="Seleccione dispositivo" --text="Seleccione el dispositivo donde copiara la imagen del disco." --separator="" --column 'Dispositivo' --height 380 --width 150 --button="ACEPTAR":0)
+if [[ -z "$usb" ]]; then
+	yad --center --window-icon=error --title="Error" --button="Ir atras":0 --button="Salir":1 --text="No selecciono nada. Debe escoger un dispositivo."
+	if [[ $? = 0 ]]; then
+		source $0
+	else
+		rm -f /run/$(basename $0).pid
+		exit 1
+	fi
+fi
+
+function limpiardd_1 () {
+	for i in $(fdisk -l "$disco" | grep "/dev" | grep -v "Disco" | awk '{print $1}'); do
+		# dd if=/dev/zero of=0bits bs=20M; rm 0bits
+		# cat /dev/zero > zero3.fill;sync;sleep 1;sync;
+		# rm 
+		umount -f $i
+		e2fsck -yf $i
+	done
+}
+
+function midd_1 () {
+	usb2=$(echo $usb"1")
+	umount -f "$usb2"
+	mkdir -p /media/usb
+	mount -t auto "$usb2" /media/usb
+	dd if="$disco" | pigz --fast > /media/usb/imagen.raw.gz
+	sync
+	md5sum -b /media/usb/imagen.raw.gz /media/usb/imagen.raw.gz.md5
+	umount -f /media/usb
+}
+
+limpiardd_1 | "$progreso" --progress-text="Revisando el disco, esto proceso puede tomar varios minutos, por favor espere" --title="Revision"
+midd_1 | "$progreso" --progress-text="Creando la imagen del disco, esto proceso puede tomar varias horas, por favor espere" --title="Creando Imagen"
+
+"$final" --text="El proceso de creacion de la imagen de disco se ha finalizado."
+
+rm -f /run/$(basename $0).pid
+exit 0
